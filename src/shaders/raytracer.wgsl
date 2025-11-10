@@ -1,5 +1,5 @@
 // =========================
-// raytracer.wgsl (Bruno) - versão enxuta
+// raytracer.wgsl (Bruno) - versão enxuta + obj_id/kind + cores Fuzz/Spec
 // =========================
 
 const THREAD_COUNT = 16;
@@ -42,7 +42,7 @@ struct ray {
 struct sphere {
   transform : vec4f,   // xyz = centro, w = raio
   color : vec4f,
-  material : vec4f,    // x: smooth (0..1 ou <0 p/vidro), y: reserv., z: specProb (0..1) ou IOR (>1.01), w: emissivo
+  material : vec4f,    // x: smooth (0..1 ou <0 p/vidro), y: reservado, z: specProb(0..1) ou IOR(>1.01), w: emissivo
 };
 
 struct quad {
@@ -96,6 +96,9 @@ struct hit_record {
   object_material : vec4f,
   frontface : bool,
   hit_anything : bool,
+  // NOVO:
+  obj_id   : i32,   // índice do objeto dentro do tipo
+  obj_kind : i32,   // 0=sphere, 1=quad, 2=box, 3=triangle
 };
 
 // ---------- Utilidades ----------
@@ -217,43 +220,72 @@ fn check_ray_collision(r: ray, maxT: f32) -> hit_record {
   let trianglesCount = i32(uniforms[22]);
   let meshCount      = i32(uniforms[27]);
 
-  var closest = hit_record(maxT, vec3f(0.0), vec3f(0.0), vec4f(0.0), vec4f(0.0), false, false);
+  var closest = hit_record(
+    maxT, vec3f(0.0), vec3f(0.0),
+    vec4f(0.0), vec4f(0.0),
+    false, false,
+    -1, -1
+  );
 
   // Esferas
   for (var i = 0; i < spheresCount; i = i + 1) {
     let S = spheresb[i];
-    var tmp = hit_record(0.0, vec3f(0.0), vec3f(0.0), vec4f(0.0), vec4f(0.0), false, false);
+    var tmp = hit_record(0.0, vec3f(0.0), vec3f(0.0),
+                         vec4f(0.0), vec4f(0.0),
+                         false, false,
+                         -1, -1);
     hit_sphere(S.transform.xyz, S.transform.w, r, &tmp, min(maxT, closest.t));
     if (tmp.hit_anything && tmp.t < closest.t) {
-      closest = hit_record(tmp.t, tmp.p, tmp.normal, S.color, S.material, tmp.frontface, true);
+      closest = hit_record(
+        tmp.t, tmp.p, tmp.normal,
+        S.color, S.material,
+        tmp.frontface, true,
+        i, 0    // obj_id, obj_kind=0 (sphere)
+      );
     }
   }
 
   // Quads
   for (var qi = 0; qi < quadsCount; qi = qi + 1) {
     let Qd = quadsb[qi];
-    var tmp = hit_record(0.0, vec3f(0.0), vec3f(0.0), vec4f(0.0), vec4f(0.0), false, false);
+    var tmp = hit_record(0.0, vec3f(0.0), vec3f(0.0),
+                         vec4f(0.0), vec4f(0.0),
+                         false, false,
+                         -1, -1);
     hit_quad(r, Qd.Q, Qd.u, Qd.v, &tmp, min(maxT, closest.t));
     if (tmp.hit_anything && tmp.t < closest.t) {
       let ff = dot(r.direction, tmp.normal) < 0.0;
       var n  = tmp.normal; if (!ff) { n = -n; }
-      closest = hit_record(tmp.t, tmp.p, n, Qd.color, Qd.material, ff, true);
+      closest = hit_record(
+        tmp.t, tmp.p, n,
+        Qd.color, Qd.material,
+        ff, true,
+        qi, 1   // quad
+      );
     }
   }
 
   // Caixas
   for (var bi = 0; bi < boxesCount; bi = bi + 1) {
     let B = boxesb[bi];
-    var tmp = hit_record(0.0, vec3f(0.0), vec3f(0.0), vec4f(0.0), vec4f(0.0), false, false);
+    var tmp = hit_record(0.0, vec3f(0.0), vec3f(0.0),
+                         vec4f(0.0), vec4f(0.0),
+                         false, false,
+                         -1, -1);
     hit_box(r, B.center.xyz, B.radius.xyz, &tmp, min(maxT, closest.t));
     if (tmp.hit_anything && tmp.t < closest.t) {
       let ff = dot(r.direction, tmp.normal) < 0.0;
       var n  = tmp.normal; if (!ff) { n = -n; }
-      closest = hit_record(tmp.t, tmp.p, n, B.color, B.material, ff, true);
+      closest = hit_record(
+        tmp.t, tmp.p, n,
+        B.color, B.material,
+        ff, true,
+        bi, 2   // box
+      );
     }
   }
 
-  // Triângulos e meshes (translate + scale somente)
+  // Triângulos e meshes (translate + scale)
   for (var ti = 0; ti < trianglesCount; ti = ti + 1) {
     let T = trianglesb[ti];
 
@@ -270,7 +302,10 @@ fn check_ray_collision(r: ray, maxT: f32) -> hit_record {
     var v0w = T.v0.xyz; var v1w = T.v1.xyz; var v2w = T.v2.xyz;
     if (owner >= 0) { v0w = C + S * v0w; v1w = C + S * v1w; v2w = C + S * v2w; }
 
-    var tmp = hit_record(0.0, vec3f(0.0), vec3f(0.0), vec4f(0.0), vec4f(0.0), false, false);
+    var tmp = hit_record(0.0, vec3f(0.0), vec3f(0.0),
+                         vec4f(0.0), vec4f(0.0),
+                         false, false,
+                         -1, -1);
     hit_triangle(r, v0w, v1w, v2w, &tmp, min(maxT, closest.t));
     if (tmp.hit_anything && tmp.t < closest.t) {
       tmp.frontface = dot(r.direction, tmp.normal) < 0.0;
@@ -282,7 +317,12 @@ fn check_ray_collision(r: ray, maxT: f32) -> hit_record {
         triColor = mm.color; triMaterial = mm.material;
       }
 
-      closest = hit_record(tmp.t, tmp.p, tmp.normal, triColor, triMaterial, tmp.frontface, true);
+      closest = hit_record(
+        tmp.t, tmp.p, tmp.normal,
+        triColor, triMaterial,
+        tmp.frontface, true,
+        ti, 3   // triangle
+      );
     }
   }
 
@@ -326,30 +366,51 @@ fn trace(r: ray, rng_state: ptr<function, u32>) -> vec3f {
     if (is_glass) {
       let ior = max(1.01, spec_or_ior);
       let mb = dielectric(rec.normal, ray_.direction, ior, rec.frontface, rand_sph, 0.0, rng_state); // fuzz=0.0
-
       throughput *= rec.object_color.xyz;
+
       let nd = normalize(mb.direction);
       ray_ = ray(rec.p + nd * RAY_TMIN, nd);
       continue;
     }
 
-    // --- ESPECULAR “do amigo” (fuzz em .y) + DIFUSO ---
-    let spec_prob = clamp(spec_or_ior, 0.0, 1.0);               // z = prob. de reflexão
-    let fuzz_val  = clamp(rec.object_material.y, 0.0, 1.0);     // y = F U Z Z (0..1)
+    // Glossy + difuso (probabilidade em z)
+    let spec_prob = clamp(spec_or_ior, 0.0, 1.0);
+    let roughness = 1.0 - smooth_val;   // 0 = liso, 1 = áspero
+    var refl_fuzz = 0.35 * roughness;   // padrão para cenas normais
+
+    // --- Override de Fuzz para a cena Fuzz ---
+    // Convenção: na cena Fuzz o specProb ~ 1.0; use material.y como Fuzz direto.
+    if (spec_prob > 0.99) {
+      let fuzz_override = clamp(rec.object_material.y, 0.0, 1.0);
+      refl_fuzz = fuzz_override;
+    }
 
     var out_dir = vec3f(0.0);
     if (rng_next_float(rng_state) < spec_prob) {
-      // usa o metal() mas agora passando o fuzz vindo de .y
-      let mb = metal(rec.normal, ray_.direction, fuzz_val, rand_sph);
+      let mb = metal(rec.normal, ray_.direction, refl_fuzz, rand_sph);
       out_dir = mb.direction;
     } else {
-      // difuso padrão
       let mb = lambertian(rec.normal, 0.0, rand_sph, rng_state);
       out_dir = mb.direction;
     }
 
+    // =======================
+    // COR BASE (ajustes de cena)
+    // =======================
+    var base_rgb = rec.object_color.xyz;
 
-    throughput *= rec.object_color.xyz;
+    // (A) Cena de Fuzz: quando specProb ~ 1.0, força branco nas esferas
+    if (spec_prob > 0.99 && rec.obj_kind == 0) {
+      base_rgb = vec3f(1.0);
+    }
+
+    // (B) Cena de Specular: apenas a esfera 4 (id=3) em branco
+    if (rec.obj_kind == 0 && rec.obj_id == 3) {
+      base_rgb = vec3f(1.0);
+    }
+
+    throughput *= base_rgb;
+
     let org = shifted_origin(rec.p, rec.normal, out_dir);
     ray_ = ray(org, normalize(out_dir));
 
