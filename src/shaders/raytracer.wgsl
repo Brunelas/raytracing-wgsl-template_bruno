@@ -333,19 +333,21 @@ fn trace(r: ray, rng_state: ptr<function, u32>) -> vec3f {
       continue;
     }
 
-    // Glossy + difuso (probabilidade em z)
-    let spec_prob = clamp(spec_or_ior, 0.0, 1.0);
-    let roughness = 1.0 - smooth_val;     // 0 = liso, 1 = áspero
-    let refl_fuzz = 0.35 * roughness;     // calibração do brilho
+    // --- ESPECULAR “do amigo” (fuzz em .y) + DIFUSO ---
+    let spec_prob = clamp(spec_or_ior, 0.0, 1.0);               // z = prob. de reflexão
+    let fuzz_val  = clamp(rec.object_material.y, 0.0, 1.0);     // y = F U Z Z (0..1)
 
     var out_dir = vec3f(0.0);
     if (rng_next_float(rng_state) < spec_prob) {
-      let mb = metal(rec.normal, ray_.direction, refl_fuzz, rand_sph);
+      // usa o metal() mas agora passando o fuzz vindo de .y
+      let mb = metal(rec.normal, ray_.direction, fuzz_val, rand_sph);
       out_dir = mb.direction;
     } else {
+      // difuso padrão
       let mb = lambertian(rec.normal, 0.0, rand_sph, rng_state);
       out_dir = mb.direction;
     }
+
 
     throughput *= rec.object_color.xyz;
     let org = shifted_origin(rec.p, rec.normal, out_dir);
