@@ -1,7 +1,42 @@
-fn hit_sphere(center: vec3f, radius: f32, r: ray, record: ptr<function, hit_record>, max: f32)
-{
+fn hit_sphere(center: vec3f, radius: f32, r: ray, record: ptr<function, hit_record>, max: f32) {
+  var oc = r.origin - center;
+  var a = dot(r.direction, r.direction);
+  var half_b = dot(oc, r.direction);
+  var c = dot(oc, oc) - radius * radius;
 
+  var discriminant = half_b * half_b - a * c;
+  if (discriminant < 0.0) {
+    (*record).hit_anything = false;
+    return;
+  }
+
+  var sqrtd = sqrt(discriminant);
+  var root = (-half_b - sqrtd) / a;
+  if (root < RAY_TMIN || root > max) {
+    root = (-half_b + sqrtd) / a;
+    if (root < RAY_TMIN || root > max) {
+      (*record).hit_anything = false;
+      return;
+    }
+  }
+
+  (*record).t = root;
+  (*record).p = ray_at(r, root);
+
+  // *** preserva o SINAL do radius (truque de casco/bubble) ***
+  var outward_normal = ((*record).p - center) / radius;
+
+  if (dot(r.direction, outward_normal) > 0.0) {
+    (*record).normal = -outward_normal;
+    (*record).frontface = false;
+  } else {
+    (*record).normal = outward_normal;
+    (*record).frontface = true;
+  }
+
+  (*record).hit_anything = true;
 }
+
 
 fn hit_quad(r: ray, Q: vec4f, u: vec4f, v: vec4f, record: ptr<function, hit_record>, max: f32)
 {
