@@ -178,15 +178,7 @@ fn schlick(cosine: f32, ref_idx: f32) -> f32 {
   return r0 + (1.0 - r0) * pow((1.0 - cosine), 5.0);
 }
 
-fn dielectric(
-  normal: vec3f,
-  in_dir: vec3f,
-  ior: f32,
-  frontface: bool,
-  random_sphere: vec3f,
-  fuzz: f32,
-  rng_state: ptr<function, u32>
-) -> material_behaviour {
+fn dielectric( normal: vec3f, in_dir: vec3f, ior: f32, frontface: bool, random_sphere: vec3f, fuzz: f32, rng_state: ptr<function, u32>) -> material_behaviour {
   let n = normalize(normal);
   let v = normalize(in_dir);
 
@@ -197,7 +189,7 @@ fn dielectric(
   let sin_theta = sqrt(max(0.0, 1.0 - cos_theta * cos_theta));
 
   let F = schlick(cos_theta, ior);
-  let cannot_refract = eta * sin_theta > 1.0;
+  let cannot_refract = eta * sin_theta > 1.0; //Condicao TIR
 
   var dir = vec3f(0.0);
   if (cannot_refract || rng_next_float(rng_state) < F) {
@@ -340,26 +332,26 @@ fn trace(r: ray, rng_state: ptr<function, u32>) -> vec3f {
   var ray_ = r;
 
   for (var j = 0; j < maxbounces; j = j + 1) {
-    let rec = check_ray_collision(ray_, RAY_TMAX);
+    let rec = check_ray_collision(ray_, RAY_TMAX); //grava o hit_record para o raio atual ate a distancia maxima
 
     // Fundo (céu)
     if (!rec.hit_anything) {
-      light += throughput * envoriment_color(ray_.direction, bg1, bg2);
+      light += throughput * envoriment_color(ray_.direction, bg1, bg2); // aqui verifica se nao bateu em nada e quebra
       break;
     }
 
     // Emissivo
-    let emissive = rec.object_material.w;
+    let emissive = rec.object_material.w; 
     if (emissive > 0.0) {
-      light += throughput * rec.object_color.xyz * emissive;
+      light += throughput * rec.object_color.xyz * emissive; // ve se é uma fonte de luz
       break;
     }
 
     // x = smooth (0..1 ou <0 p/vidro), z = specProb (0..1) ou IOR (>1.01)
     let smooth_val  = clamp(rec.object_material.x, 0.0, 1.0);
-    let spec_or_ior = rec.object_material.z;
+    let spec_or_ior = rec.object_material.z; //aqui define o material pode ser especular ou Indice de refracao
 
-    let rand_sph = rng_next_vec3_in_unit_sphere(rng_state);
+    let rand_sph = rng_next_vec3_in_unit_sphere(rng_state); //usado para gerar um numero aleatroia para o monte carlo
 
     // Vidro (usa dielectric)
     let is_glass = (rec.object_material.x < 0.0) || (spec_or_ior > 1.01);
@@ -369,50 +361,40 @@ fn trace(r: ray, rng_state: ptr<function, u32>) -> vec3f {
       throughput *= rec.object_color.xyz;
 
       let nd = normalize(mb.direction);
-      ray_ = ray(rec.p + nd * RAY_TMIN, nd);
+      // ray_ = ray(rec.p + nd * RAY_TMIN, nd);  //uso o shifted_origin aqui mas de uma forma sem a funcao
+      let org = shifted_origin(rec.p, rec.normal, nd);
+      ray_ = ray(org, nd);
       continue;
     }
 
     // Glossy + difuso (probabilidade em z)
     let spec_prob = clamp(spec_or_ior, 0.0, 1.0);
-    let roughness = 1.0 - smooth_val;   // 0 = liso, 1 = áspero
-    var refl_fuzz = 0.35 * roughness;   // padrão para cenas normais
+    let roughness = 1.0 - smooth_val;     // 0 = liso, 1 = áspero
+    var  refl_fuzz = 0.35 * roughness;
 
-    // --- Override de Fuzz para a cena Fuzz ---
-    // Convenção: na cena Fuzz o specProb ~ 1.0; use material.y como Fuzz direto.
+    // -- cena Fuzz (se usar material.y como fuzz da cena)
     if (spec_prob > 0.99) {
       let fuzz_override = clamp(rec.object_material.y, 0.0, 1.0);
       refl_fuzz = fuzz_override;
     }
 
+    // Amostragem: se cair em especular (metal), NÃO “tintar”; se cair em difuso, aplica albedo
     var out_dir = vec3f(0.0);
     if (rng_next_float(rng_state) < spec_prob) {
       let mb = metal(rec.normal, ray_.direction, refl_fuzz, rand_sph);
-      out_dir = mb.direction;
+      out_dir = mb.direction;               // especular → sem albedo (cromado/branco)
     } else {
       let mb = lambertian(rec.normal, 0.0, rand_sph, rng_state);
       out_dir = mb.direction;
+      // difuso → aqui sim aplica a “tinta” do objeto
+      throughput *= rec.object_color.xyz;
     }
 
-    // =======================
-    // COR BASE (ajustes de cena)
-    // =======================
-    var base_rgb = rec.object_color.xyz;
-
-    // (A) Cena de Fuzz: quando specProb ~ 1.0, força branco nas esferas
-    if (spec_prob > 0.99 && rec.obj_kind == 0) {
-      base_rgb = vec3f(1.0);
-    }
-
-    // (B) Cena de Specular: apenas a esfera 4 (id=3) em branco
-    if (rec.obj_kind == 0 && rec.obj_id == 3) {
-      base_rgb = vec3f(1.0);
-    }
-
-    throughput *= base_rgb;
-
+    // avança o raio
     let org = shifted_origin(rec.p, rec.normal, out_dir);
     ray_ = ray(org, normalize(out_dir));
+
+
 
     // Russian roulette simples
     if (j >= 5) {
@@ -448,7 +430,7 @@ fn render(@builtin(global_invocation_id) id : vec3u) {
   var acc = vec3f(0.0);
   for (var s = 0; s < spp; s = s + 1) {
     let uv = (frag + sample_square(&rng_state)) / vec2(rez);
-    let col = trace(get_ray(cam, uv, &rng_state), &rng_state); // linear
+    let col = trace(get_ray(cam, uv, &rng_state), &rng_state); // linear aplica raio e comeca o loop de bounce
     acc += col;
   }
   var frameLinear = acc / f32(spp);
