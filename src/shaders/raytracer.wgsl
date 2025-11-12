@@ -368,25 +368,19 @@ fn trace(r: ray, rng_state: ptr<function, u32>) -> vec3f {
     }
 
     // Glossy + difuso (probabilidade em z)
-    let spec_prob = clamp(spec_or_ior, 0.0, 1.0);
-    let roughness = 1.0 - smooth_val;     // 0 = liso, 1 = áspero
-    var  refl_fuzz = 0.35 * roughness;
-
-    // -- cena Fuzz (se usar material.y como fuzz da cena)
-    if (spec_prob > 0.99) {
-      let fuzz_override = clamp(rec.object_material.y, 0.0, 1.0);
-      refl_fuzz = fuzz_override;
-    }
+    let spec_prob  = clamp(spec_or_ior, 0.0, 1.0);          // material.z controla "quanto" metálico (0..1)
+    let refl_fuzz  = clamp(rec.object_material.y, 0.0, 1.0); // material.y controla o Fuzz (0 = espelho, 1 = bem borrado)
 
     // Amostragem: se cair em especular (metal), NÃO “tintar”; se cair em difuso, aplica albedo
     var out_dir = vec3f(0.0);
     if (rng_next_float(rng_state) < spec_prob) {
+      // METAL / GLOSSY: reflexo do ambiente (cromado); a cor vem do ambiente
       let mb = metal(rec.normal, ray_.direction, refl_fuzz, rand_sph);
-      out_dir = mb.direction;               // especular → sem albedo (cromado/branco)
+      out_dir = mb.direction;
     } else {
+      // DIFUSO: aqui sim usa a “tinta” do objeto
       let mb = lambertian(rec.normal, 0.0, rand_sph, rng_state);
       out_dir = mb.direction;
-      // difuso → aqui sim aplica a “tinta” do objeto
       throughput *= rec.object_color.xyz;
     }
 
